@@ -2,7 +2,7 @@
   "name": "payment-gateway-backend",
   "version": "1.0.0",
   "description": "Backend for payment gateway",
-  "main": "index.js",
+  "main": "backend/app.js",
   "scripts": {
     "dev": "nodemon backend/app.js"
   },
