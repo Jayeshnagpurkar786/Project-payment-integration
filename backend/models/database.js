@@ -12,10 +12,9 @@ const pool = new Pool({
   password: process.env.DATABASE_PASSWORD,
   port: process.env.DATABASE_PORT,
   ssl: {
-    rejectUnauthorized: false // Optionally, set this to `true` to enforce SSL validation
+    rejectUnauthorized: false // Set to true to enforce SSL validation if required
   }
 });
-
 // Connect to the database
 pool.connect()
   .then(() => console.log('Connected to the database'))
