@@ -10,10 +10,8 @@ const pool = new Pool({
   host: process.env.DATABASE_HOST,
   database: process.env.DATABASE_NAME,
   password: process.env.DATABASE_PASSWORD,
-  port: process.env.DATABASE_PORT,
-  ssl: {
-    rejectUnauthorized: false // Set to true to enforce SSL validation if required
-  }
+  port: process.env.DATABASE_PORT || 5432 ,
+  ssl: { rejectUnauthorized: false }
 });
 // Connect to the database
 pool.connect()
