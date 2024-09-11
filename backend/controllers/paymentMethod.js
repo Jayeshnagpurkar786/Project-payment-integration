@@ -1,103 +1,17 @@
 const { pool } = require("../models/database");
 const Razorpay = require("razorpay");
-const fs = require("fs");
+const axios = require('axios');
 const {
   validateWebhookSignature,
 } = require("razorpay/dist/utils/razorpay-utils");
 
+// Initialize Razorpay instance
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
-// Function to read data from JSON file
-// const readData = () => {
-//   if (fs.existsSync("orders.json")) {
-//     const data = fs.readFileSync("orders.json");
-//     return JSON.parse(data);
-//   }
-//   return [];
-// };
-// // Function to write data to JSON file
-// const writeData = (data) => {
-//   fs.writeFileSync("orders.json", JSON.stringify(data, null, 2));
-// };
-
-// // Initialize orders.json if it doesn't exist
-// if (!fs.existsSync("orders.json")) {
-//   writeData([]);
-// }
-
-//old Route to handle order creation
-
-// async function createPayment(req, res) {
-//   try {
-//     const { amount } = req.body;
-//     const options = {
-//       amount: amount*100, // Convert amount to paise
-//       // currency,
-//       // receipt,
-//       // notes,
-//     };
-
-//     const order = await razorpay.orders.create(options);
-
-//     // Read current orders, add new order, and write back to the file
-//     const orders = readData();
-//     orders.push({
-//       order_id: order.id,
-//       amount: order.amount,
-//       currency: order.currency,
-//       receipt: order.receipt,
-//       status: "created",
-//     });
-//     writeData(orders);
-
-//     res.status(200).json(order); // Send order details to frontend, including order ID
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: "Failed to create Razorpay order" });
-//   }
-// }
-//old verify payment
-// async function verifyPayment(req, res) {
-//   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
-//     req.body;
-//   const body = razorpay_order_id + "|" + razorpay_payment_id;
-
-//   try {
-//     const isValidSignature = validateWebhookSignature(
-//       body,
-//       razorpay_signature,
-//          process.env.RAZORPAY_KEY_SECRET,
-//       // "baqn54chqOz7hqwMAzE4n8XS"
-//     );
-
-//     if (isValidSignature) {
-//       // Update the order with payment details
-//       const orders = readData();
-//       const order = orders.find((o) => o.order_id === razorpay_order_id);
-//       if (order) {
-//         order.status = "paid";
-//         order.payment_id = razorpay_payment_id;
-//         writeData(orders);
-//       }
-
-//       res.status(200).json({ status: "ok" });
-//       console.log("Payment verification successful");
-//     } else {
-//       res.status(400).json({ status: "verification_failed" });
-//       console.log("Payment verification failed");
-//     }
-//   } catch (error) {
-//     console.error(error);
-//     res
-//       .status(500)
-//       .json({ status: "error", message: "Error verifying payment" });
-//   }
-// }
-
-//Create Payment
+// Create Payment
 async function createPayment(req, res) {
   try {
     const { amount } = req.body;
@@ -125,7 +39,7 @@ async function createPayment(req, res) {
   }
 }
 
-//Verify Payment
+// Verify Payment
 async function verifyPayment(req, res) {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
   const body = razorpay_order_id + "|" + razorpay_payment_id;
@@ -138,7 +52,6 @@ async function verifyPayment(req, res) {
     );
 
     if (isValidSignature) {
-     
       const queryText = `
         UPDATE orders
         SET status = $1, payment_id = $2
@@ -164,21 +77,78 @@ async function verifyPayment(req, res) {
   }
 }
 
-//Refund
+// Refund function using direct API call and database insertion
+async function refundPayment(paymentId, amount) {
+  try {
+    const response = await axios.post(
+      `https://api.razorpay.com/v1/refunds`,
+      {
+        payment_id: paymentId,
+        amount: amount * 100, // amount should be in paise
+      },
+      {
+        auth: {
+          username: process.env.RAZORPAY_KEY_ID,
+          password: process.env.RAZORPAY_KEY_SECRET,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    console.log('Refund successful:', response.data);
+    
+    // Insert refund details into the database
+    const refundQueryText = `
+      INSERT INTO refund (
+        refund_id, amount, currency, payment_id, notes, receipt, acquirer_data,
+        created_at, batch_id, status, speed_processed, speed_requested
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
+    `;
+    
+    const refundValues = [
+      response.data.id,
+      response.data.amount,
+      response.data.currency,
+      response.data.payment_id,
+      response.data.notes || '{}',
+      response.data.receipt || null,
+      response.data.acquirer_data || '{}',
+      new Date(response.data.created_at * 1000), // Convert Unix timestamp to JS Date object
+      response.data.batch_id || '',
+      response.data.status,
+      response.data.speed_processed || '',
+      response.data.speed_requested || ''
+    ];
+    
+    await pool.query(refundQueryText, refundValues);
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error initiating refund:', error.response ? error.response.data : error.message);
+    if (error.response && error.response.status === 400) {
+      // Handle insufficient balance or invalid request
+      console.error('Insufficient balance or invalid request.');
+    }
+    throw error; // Re-throw the error if needed
+  }
+}
+
+// Payment Refund Endpoint
 async function paymentRefund(req, res) {
   const { paymentId, amount } = req.body;
 
   try {
-    const refund = await razorpay.payments.refund(paymentId, {
-      amount: amount * 100,
-    });
+    const refund = await refundPayment(paymentId, amount);
 
     res.status(200).json({
       message: "Refund initiated successfully",
       refund,
     });
   } catch (error) {
-    console.error("Error initiating refund:", error);
+    console.error("Error initiating refund:", error.message);
     res.status(500).json({
       message: "Failed to initiate refund",
       error: error.message,
@@ -186,7 +156,7 @@ async function paymentRefund(req, res) {
   }
 }
 
-//Fetch All Orders Details
+// Fetch All Orders Details
 async function getAllOrders(req, res) {
   try {
     const queryText = 'SELECT * FROM orders ORDER BY id DESC'; 

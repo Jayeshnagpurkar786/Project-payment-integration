@@ -18,3 +18,4 @@ build/
 .DS_Store
 
 # Any other specific files or folders to ignore
+.vercel
